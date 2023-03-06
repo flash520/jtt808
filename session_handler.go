@@ -2,13 +2,13 @@ package jtt808
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"reflect"
 	"strconv"
-	
+
 	"github.com/flash520/link"
 	log "github.com/sirupsen/logrus"
-	
+
 	"github.com/flash520/jtt808/protocol"
 )
 
@@ -18,11 +18,11 @@ type sessionHandler struct {
 	autoMergePacket bool
 }
 
-func (handler sessionHandler) HandleSession(sess *link.Session) {
+func (handler sessionHandler) HandlerSession(sess *link.Session) {
 	log.WithFields(log.Fields{
 		"id": sess.ID(),
 	}).Debug("[JT/T 808] new session created")
-	
+
 	// 创建Session
 	session := newSession(handler.server, sess)
 	handler.server.mutex.Lock()
@@ -32,7 +32,7 @@ func (handler sessionHandler) HandleSession(sess *link.Session) {
 	sess.AddCloseCallback(nil, nil, func() {
 		handler.server.handleClose(session)
 	})
-	
+
 	for {
 		// 接收消息
 		msg, err := sess.Receive()
@@ -40,20 +40,20 @@ func (handler sessionHandler) HandleSession(sess *link.Session) {
 			sess.Close()
 			break
 		}
-		
+
 		// 分发消息
 		message := msg.(protocol.Message)
 		if message.Body == nil || reflect.ValueOf(message.Body).IsNil() {
 			session.Reply(&message, protocol.T808_0x8001ResultUnsupported)
 			continue
 		}
-		
+
 		if !handler.autoMergePacket || !message.Header.Property.IsEnablePacket() {
 			session.message(&message)
 			handler.server.dispatchMessage(session, &message)
 			continue
 		}
-		
+
 		// 处理分包消息
 		entityPacket, ok := interface{}(message.Body).(protocol.EntityPacket)
 		if !ok {
@@ -61,14 +61,14 @@ func (handler sessionHandler) HandleSession(sess *link.Session) {
 			handler.server.dispatchMessage(session, &message)
 			continue
 		}
-		
+
 		multipartFile := MultipartFile{
 			IccID: message.Header.IccID,
 			MsgID: message.Header.MsgID,
 			Tag:   entityPacket.GetTag(),
 			Sum:   message.Header.Packet.Sum,
 		}
-		buf, err := ioutil.ReadAll(entityPacket.GetReader())
+		buf, err := io.ReadAll(entityPacket.GetReader())
 		if err != nil {
 			log.WithFields(log.Fields{
 				"iccid":  message.Header.IccID,
@@ -79,7 +79,7 @@ func (handler sessionHandler) HandleSession(sess *link.Session) {
 			session.Reply(&message, protocol.T808_0x8001ResultFail)
 			continue
 		}
-		
+
 		err = multipartFile.Write(message.Header.Packet.Seq, buf)
 		if err != nil {
 			log.WithFields(log.Fields{
@@ -91,12 +91,12 @@ func (handler sessionHandler) HandleSession(sess *link.Session) {
 			session.Reply(&message, protocol.T808_0x8001ResultFail)
 			continue
 		}
-		
+
 		session.Reply(&message, protocol.T808_0x8001ResultSuccess)
 		if message.Header.Packet.Seq != message.Header.Packet.Sum || !multipartFile.IsFull() {
 			continue
 		}
-		
+
 		reader, err := multipartFile.Merge()
 		if err != nil {
 			log.WithFields(log.Fields{
@@ -106,7 +106,7 @@ func (handler sessionHandler) HandleSession(sess *link.Session) {
 			}).Warn("[JT/T 808] failed to merge packet file parts")
 			continue
 		}
-		
+
 		// 分发分包消息
 		entityPacket.SetReader(reader)
 		session.message(&message)

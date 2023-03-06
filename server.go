@@ -8,10 +8,10 @@ import (
 	"runtime/debug"
 	"strconv"
 	"sync"
-	
+
 	"github.com/flash520/link"
 	log "github.com/sirupsen/logrus"
-	
+
 	"github.com/flash520/jtt808/protocol"
 )
 
@@ -29,10 +29,10 @@ type Server struct {
 	handler    sessionHandler
 	timer      *CountdownTimer
 	privateKey *rsa.PrivateKey
-	
+
 	mutex    sync.Mutex
 	sessions map[uint64]*Session
-	
+
 	closeHandler    func(*Session)
 	messageHandlers sync.Map
 }
@@ -44,11 +44,11 @@ func NewServer(options Options) (*Server, error) {
 	if options.Keepalive <= 0 {
 		options.Keepalive = 60
 	}
-	
+
 	if options.PrivateKey != nil && options.PrivateKey.Size() != 128 {
 		return nil, errors.New("RSA key must be 1024 bits")
 	}
-	
+
 	server := Server{
 		closeHandler: options.CloseHandler,
 		sessions:     make(map[uint64]*Session),
@@ -65,13 +65,13 @@ func (server *Server) Run(network string, port int) error {
 	if server.server != nil {
 		return errors.New("server already running")
 	}
-	
+
 	address := fmt.Sprintf("0.0.0.0:%d", port)
 	listen, err := net.Listen(network, address)
 	if err != nil {
 		return err
 	}
-	
+
 	p := Protocol{
 		privateKey: server.privateKey,
 	}
@@ -80,7 +80,7 @@ func (server *Server) Run(network string, port int) error {
 	return server.server.Serve()
 }
 
-// 停止服务
+// Stop 停止服务
 func (server *Server) Stop() {
 	if server.server != nil {
 		server.server.Stop()
@@ -88,7 +88,7 @@ func (server *Server) Stop() {
 	}
 }
 
-// 获取Session
+// GetSession 获取Session
 func (server *Server) GetSession(id uint64) (*Session, bool) {
 	server.mutex.Lock()
 	defer server.mutex.Unlock()
@@ -99,12 +99,12 @@ func (server *Server) GetSession(id uint64) (*Session, bool) {
 	return session, true
 }
 
-// 获取平台私钥
+// GetPrivateKey 获取平台私钥
 func (server *Server) GetPrivateKey() *rsa.PrivateKey {
 	return server.privateKey
 }
 
-// 广播消息
+// Broadcast 广播消息
 func (server *Server) Broadcast(entity protocol.Entity) int {
 	server.mutex.Lock()
 	sessions := make([]*Session, 0, len(server.sessions))
@@ -112,7 +112,7 @@ func (server *Server) Broadcast(entity protocol.Entity) int {
 		sessions = append(sessions, session)
 	}
 	server.mutex.Unlock()
-	
+
 	count := 0
 	for _, session := range sessions {
 		if _, err := session.Send(entity); err == nil {
@@ -122,19 +122,19 @@ func (server *Server) Broadcast(entity protocol.Entity) int {
 	return count
 }
 
-// 添加消息处理
+// AddHandler 添加消息处理
 func (server *Server) AddHandler(msgID protocol.MsgID, handler MessageHandler) {
 	if handler != nil {
 		server.messageHandlers.Store(msgID, handler)
 	}
 }
 
-// 处理关闭
+// handleClose 处理关闭
 func (server *Server) handleClose(session *Session) {
 	server.mutex.Lock()
 	delete(server.sessions, session.ID())
 	server.mutex.Unlock()
-	
+
 	server.timer.Remove(strconv.FormatUint(session.ID(), 10))
 	if server.closeHandler != nil {
 		func() {
@@ -146,36 +146,36 @@ func (server *Server) handleClose(session *Session) {
 			server.closeHandler(session)
 		}()
 	}
-	
+
 	log.WithFields(log.Fields{
 		"id": session.ID(),
 	}).Debug("[JT/T 808] session closed")
 }
 
-// 处理读超时
+// handleReadTimeout 处理读超时
 func (server *Server) handleReadTimeout(key string) {
 	sessionID, err := strconv.ParseUint(key, 10, 64)
 	if err != nil {
 		return
 	}
-	
+
 	session, ok := server.GetSession(sessionID)
 	if !ok {
 		return
 	}
 	session.Close()
-	
+
 	log.WithFields(log.Fields{
 		"id": sessionID,
 	}).Debug("[JT/T 808] session read timeout")
 }
 
-// 分派消息
+// dispatchMessage 分派消息
 func (server *Server) dispatchMessage(session *Session, message *protocol.Message) {
 	log.WithFields(log.Fields{
 		"id": fmt.Sprintf("0x%x", message.Header.MsgID),
 	}).Debug("[JT/T 808] dispatch message")
-	
+
 	handler, ok := server.messageHandlers.Load(message.Header.MsgID)
 	if !ok {
 		log.WithFields(log.Fields{
@@ -183,7 +183,7 @@ func (server *Server) dispatchMessage(session *Session, message *protocol.Messag
 		}).Info("[JT/T 808] dispatch message canceled, handler not found")
 		return
 	}
-	
+
 	defer func() {
 		if err := recover(); err != nil {
 			debug.PrintStack()
